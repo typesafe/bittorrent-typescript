@@ -29,6 +29,23 @@ class Writer {
       return this.write(Buffer.from(value));
     }
 
+    if (value instanceof Map) {
+      this.writeString("d");
+      for (const [k, v] of value.entries()) {
+        if (typeof v == "function") {
+          continue;
+        }
+
+        this.writeString(k.length.toString());
+        this.writeString(":");
+        this.writeString(k);
+
+        this.write(v);
+      }
+      this.writeString("e");
+      return;
+    }
+
     if (Array.isArray(value)) {
       this.writeString("l");
       for (const item of value) {
@@ -53,12 +70,14 @@ class Writer {
       }
       case "object": {
         this.writeString("d");
-        for (const [k, v] of Object.entries(value)) {
+        for (const [k, v] of Object.entries(value).filter(
+          ([_, val]) => typeof val != "function"
+        )) {
           this.writeString(k.length.toString());
-          this.writeString(':');
+          this.writeString(":");
           this.writeString(k);
 
-          this.write(v);
+          this.write(v as Value);
         }
         this.writeString("e");
 

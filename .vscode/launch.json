@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "debug info",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.ts",
+      "args": ["info", "./sample.torrent"]
+    }
+  ]
+}
