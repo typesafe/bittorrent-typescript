@@ -22,8 +22,19 @@ switch (args[2]) {
 
       console.log(`Tracker URL: ${decoded.get("announce")?.toString()}`);
       console.log(`Length: ${info.get("length")}`);
-      console.log(`Info Hash: ${createHash("sha1").update(encode(info)).digest("hex")}`
+      console.log(
+        `Info Hash: ${createHash("sha1").update(encode(info)).digest("hex")}`
       );
+
+      console.log(`Piece Length: ${info.get("piece length")}`);
+      console.log(`Piece Hashes:`);
+      const pieces = info.get("pieces").toString("hex") as string;
+
+      let s = 0;
+      while (s < pieces.length) {
+        console.log(pieces.substring(s, s + 40));
+        s += 40;
+      }
     } catch (error: any) {
       console.error(error.message);
     }
