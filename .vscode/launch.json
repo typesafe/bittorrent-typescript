@@ -7,6 +7,13 @@
       "request": "launch",
       "program": "${workspaceFolder}/app/main.ts",
       "args": ["info", "./sample.torrent"]
+    },
+    {
+      "name": "debug peers",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.ts",
+      "args": ["info", "./sample.torrent"]
     }
   ]
 }
