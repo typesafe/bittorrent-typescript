@@ -13,7 +13,14 @@
       "type": "bun",
       "request": "launch",
       "program": "${workspaceFolder}/app/main.ts",
-      "args": ["info", "./sample.torrent"]
+      "args": ["peers", "./sample.torrent"]
+    },
+    {
+      "name": "debug handshake",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.ts",
+      "args": ["handshake", "./sample.torrent", "165.232.33.77:51498"]
     }
   ]
 }

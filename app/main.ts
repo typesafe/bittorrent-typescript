@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { request } from "node:https";
 import { URLSearchParams } from "node:url";
 import { buffer } from "node:stream/consumers";
+import { createConnection } from "node:net";
 
 const args = process.argv;
 
@@ -79,6 +80,41 @@ const args = process.argv;
       }
 
       return;
+    }
+    case "handshake": {
+      const decoded = decode(readFileSync(args[3])) as Map<string, any>;
+      const info = decoded.get("info");
+      const hash = createHash("sha1").update(encode(info)).digest();
+      const hostAndPort = args[4].split(":");
+      const connection = createConnection(
+        { host: hostAndPort[0], port: parseInt(hostAndPort[1]) },
+        () => {
+          connection.write(
+            Buffer.concat([
+              Buffer.from([19]),
+              Buffer.from("BitTorrent protocol"),
+              Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+              hash,
+              Buffer.from("00112233445566778899"),
+            ])
+          );
+        }
+      );
+
+      connection.on("data", (data) => {
+        console.log(
+          `Peer ID: ${data.subarray(1 + 19 + 8 + 20).toString("hex")}`
+        );
+        connection.end();
+      });
+
+      connection.on("error", (err) => console.log);
+      connection.on("close", (hadError) => {
+        //console.log(hadError ? "closed after error" : "closed");
+      });
+      connection.on("end", () => {
+        //console.log("end");
+      });
     }
   }
 })();
