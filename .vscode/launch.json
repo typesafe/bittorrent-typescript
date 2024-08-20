@@ -21,6 +21,14 @@
       "request": "launch",
       "program": "${workspaceFolder}/app/main.ts",
       "args": ["handshake", "./sample.torrent", "165.232.33.77:51498"]
+    },
+    {
+      "name": "debug download_piece",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.ts",
+      "args": ["download_piece", "-o", "./piece-3.bin", "./sample.torrent", "2"]
     }
+    
   ]
 }
