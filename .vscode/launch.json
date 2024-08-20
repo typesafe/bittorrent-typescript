@@ -28,7 +28,13 @@
       "request": "launch",
       "program": "${workspaceFolder}/app/main.ts",
       "args": ["download_piece", "-o", "./piece-3.bin", "./sample.torrent", "2"]
+    },
+    {
+      "name": "debug download",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.ts",
+      "args": ["download", "-o", "./downloaded.txt", "./sample.torrent"]
     }
-    
   ]
 }

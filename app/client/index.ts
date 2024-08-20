@@ -1,3 +1,4 @@
+import exp from "constants";
 import { promises, WriteStream } from "fs";
 import { createConnection, Socket } from "net";
 import { EventEmitter } from "stream";
@@ -12,6 +13,7 @@ export class BitTorrentClient extends EventEmitter<
   static async connect(host: string, port: number) {
     return new Promise<BitTorrentClient>((res, rej) => {
       const connection = createConnection({ host, port }, () => {
+        console.log(`connected to ${host}:${port}`);
         connection.off("error", rej);
         res(new BitTorrentClient(connection));
       });
@@ -39,53 +41,50 @@ export class BitTorrentClient extends EventEmitter<
     hash: Buffer,
     ignoreBitfields: boolean
   ): Promise<{ peerId: Buffer; bitfield?: Buffer }> {
-    this.write(
-      Buffer.concat([
-        Buffer.from([19]),
-        Buffer.from("BitTorrent protocol"),
-        Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
-        hash,
-        Buffer.from("00112233445566778899"),
-      ])
-    );
+    const p = Buffer.concat([
+      Buffer.from([19]),
+      Buffer.from("BitTorrent protocol"),
+      Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+      hash,
+      Buffer.from("00112233445566778899"),
+    ]);
 
     if (ignoreBitfields) {
       return {
-        peerId: (await this.awaitMessage("handshake")).subarray(
+        peerId: (await this.sendRequest(p, "handshake")).subarray(
           1 + 19 + 8 + 20
         ),
       };
     }
 
-    const [hs, bf] = await this.awaitMessages(["handshake", "bitfield"]);
+    const [hs, bf] = await this.sendRequest(p, ["handshake", "bitfield"]);
 
     return { peerId: hs.subarray(1 + 19 + 8 + 20), bitfield: bf.subarray(5) };
   }
 
   /** Tells the peer we want to start downloading. Resolves when the peer returns an `unchoke` message. */
-  async interested() {
-    this.connection.write(Buffer.from([0, 0, 0, 1, 2]));
-    return this.awaitMessage("unchoke");
+  interested() {
+    return this.sendRequest(Buffer.from([0, 0, 0, 1, 2]), "unchoke");
   }
 
   /** Requests a chunk from a piece of a file. */
-  async request(index: number, offset: number, length: number) {
-    this.write(
+  request(index: number, offset: number, length: number) {
+    return this.sendRequest(
       Buffer.concat([
         Buffer.from([0, 0, 0, 13, 6]),
         this.getUInt32Bytes(index),
         this.getUInt32Bytes(offset),
         this.getUInt32Bytes(length),
-      ])
+      ]),
+      "piece"
     );
-
-    return this.awaitMessage("piece");
   }
 
   async downloadPiece(
     info: { length: number; pieceLength: number },
     index: number,
-    stream: promises.FileHandle
+    stream: promises.FileHandle,
+    streamPosition = 0
   ) {
     // A file is split in pieces and every piece is split in chunks
     const pieces = Math.ceil(info.length / info.pieceLength);
@@ -98,32 +97,67 @@ export class BitTorrentClient extends EventEmitter<
     let i = 0;
 
     while (left > 0) {
-      const pc = await this.request(
-        index,
-        i * DEFAULT_CHUNK_SIZE,
-        left < DEFAULT_CHUNK_SIZE ? left : DEFAULT_CHUNK_SIZE
-      );
+      const chunkSize = left < DEFAULT_CHUNK_SIZE ? left : DEFAULT_CHUNK_SIZE;
+      const pc = await this.request(index, i * DEFAULT_CHUNK_SIZE, chunkSize);
 
       const content = pc.subarray(13);
 
+      console.log(
+        `index ${i}: writing ${content.length} bytes at ${
+          streamPosition + i * DEFAULT_CHUNK_SIZE
+        }`
+      );
+
+      await stream.write(
+        content,
+        0,
+        content.length,
+        streamPosition + i * DEFAULT_CHUNK_SIZE
+      );
+
       left -= content.length;
       i++;
-
-      await stream.write(content);
     }
   }
 
-  private async awaitMessage(messageType: MessageType) {
-    return (await this.awaitMessages([messageType]))[0];
+  async download(
+    info: { length: number; pieceLength: number },
+    stream: promises.FileHandle
+  ) {
+    const pieces = Math.ceil(info.length / info.pieceLength);
+    for (let i = 0; i < pieces; i++) {
+      await this.downloadPiece(info, i, stream, info.pieceLength * i);
+    }
   }
-
-  private async awaitMessages(messages: MessageType[]) {
-    return new Promise<Buffer[]>((res, rej) => {
-      this.expect(messages, res, rej);
+  private async sendRequest(
+    requestPayload: Buffer,
+    expectedResponseMessageType: MessageType
+  ): Promise<Buffer>;
+  private async sendRequest(
+    requestPayload: Buffer,
+    expectedResponseMessageTypes: MessageType[]
+  ): Promise<Buffer[]>;
+  private async sendRequest(
+    requestPayload: Buffer,
+    expectedResponseMessageTypes: MessageType | MessageType[]
+  ) {
+    const singleMessage = typeof expectedResponseMessageTypes == "string";
+    const p = new Promise<Buffer[]>((res, rej) => {
+      this.resolveRequest(
+        requestPayload,
+        singleMessage
+          ? [expectedResponseMessageTypes]
+          : expectedResponseMessageTypes,
+        res,
+        rej
+      );
     });
+
+    return singleMessage ? p.then((r) => r[0]) : p;
   }
 
-  private expect(
+  private resolveRequest(
+    requestPayload: Buffer,
     expectedMessageTypes: MessageType[],
     res: (value: Buffer[] | PromiseLike<Buffer[]>) => void,
     rej: (reason?: any) => void
@@ -140,29 +174,35 @@ export class BitTorrentClient extends EventEmitter<
     };
 
     const handleMessage = (msg: Buffer) => {
-      this.off("error", handleError);
-      this.off("close", handleError);
+      const expectedMessage = queue.shift();
 
       if (
-        MessageTypes[msg[4]] == queue[0] ||
-        (msg[0] == 19 && queue[0] == "handshake")
+        MessageTypes[msg[4]] == expectedMessage ||
+        (msg[0] == 19 && expectedMessage == "handshake")
       ) {
         result.push(msg);
-        if (queue.length == 1) {
-          this.off("message", handleError);
+        if (queue.length == 0) {
+          this.off("message", handleMessage);
+          this.off("error", handleError);
+          this.off("close", handleError);
           res(result);
-        } else {
-          queue.shift();
         }
       } else {
-        this.off("message", handleError);
+        console.log("unexpected message", msg);
+        this.off("message", handleMessage);
+        this.off("error", handleError);
+        this.off("close", handleError);
         rej("unexpected message");
       }
     };
 
-    this.once("error", handleError);
-    this.once("close", handleError);
+    this.on("error", handleError);
+    this.on("close", handleError);
     this.on("message", handleMessage);
+
+    // IMPORTANT: only after wiring the handlers we can send the request
+    // else we risk losing messages
+    this.write(requestPayload);
   }
 
   /// Wires the necessary events and translates incoming chunks to emitted message events

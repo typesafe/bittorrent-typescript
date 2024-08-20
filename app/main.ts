@@ -7,117 +7,149 @@ import { BitTorrentClient } from "./client";
 
 const args = process.argv;
 
-(async function () {
-  switch (args[2]) {
-    case "decode": {
-      handleDecodeCommand();
-      return;
-    }
-    case "info": {
-      handleInfoCommand();
-      return;
-    }
-    case "peers": {
-      await handlePeersCommand();
-
-      return;
-    }
-    case "handshake": {
-      await handleHandshakeCommand();
-
-      return;
-    }
-    case "download_piece": {
-      await handleDownloadPieceCommand();
-      return;
-    }
+switch (args[2]) {
+  case "decode": {
+    handleDecodeCommand();
+    break;
   }
-
-  async function handleDownloadPieceCommand() {
-    const decoded = decode(fs.readFileSync(args[5])) as Map<string, any>;
-
-    const peers = getPeers(decoded);
-    const p = (await peers.next()).value!;
-    const [host, port] = p.split(":");
-
-    const info = decoded.get("info");
-    const hash = createHash("sha1").update(encode(info)).digest();
-
-    const requestedPieceIndex = parseInt(args[6]);
-
-    const connection = await BitTorrentClient.connect(host, parseInt(port));
-
-    await connection.handshake(hash, false);
-    await connection.interested();
-
-    const file = await fs.promises.open(args[4], "w");
-
-    await connection.downloadPiece(
-      {
-        length: info.get("length") as number,
-        pieceLength: info.get("piece length") as number,
-      },
-      requestedPieceIndex,
-      file
-    );
-
-    await file.close();
-    connection.close();
-
-    console.log(`Piece ${args[6]} downloaded to ${args[4]}.`);
+  case "info": {
+    handleInfoCommand();
+    break;
   }
+  case "peers": {
+    void handlePeersCommand();
 
-  async function handleHandshakeCommand() {
+    break;
+  }
+  case "handshake": {
+    void handleHandshakeCommand();
+
+    break;
+  }
+  case "download_piece": {
+    void handleDownloadPieceCommand();
+    break;
+  }
+  case "download": {
+    void handleDownloadCommand();
+    break;
+  }
+}
+
+async function handleDownloadCommand() {
+  const decoded = decode(fs.readFileSync(args[5])) as Map<string, any>;
+
+  const peers = getPeers(decoded);
+  const p = (await peers.next()).value!;
+  const [host, port] = p.split(":");
+
+  const info = decoded.get("info");
+  const hash = createHash("sha1").update(encode(info)).digest();
+
+  const connection = await BitTorrentClient.connect(host, parseInt(port));
+
+  await connection.handshake(hash, false);
+  await connection.interested();
+
+  const file = await fs.promises.open(args[4], "w");
+
+  await connection.download(
+    {
+      length: info.get("length") as number,
+      pieceLength: info.get("piece length") as number,
+    },
+    file
+  );
+
+  await file.close();
+  connection.close();
+
+  console.log(`Downloaded ${fs.readFileSync(args[5])} to ${args[4]}.`);
+}
+
+async function getInfo(torrentFile: string) {
+  const decoded = decode(fs.readFileSync(torrentFile)) as Map<string, any>;
+
+  const peers = getPeers(decoded);
+  const p = (await peers.next()).value!;
+  const [host, port] = p.split(":");
+
+  const info = decoded.get("info");
+  const hash = createHash("sha1")
+    .update(encode(decoded.get("info")))
+    .digest();
+
+  return {
+    host,
+    port: parseInt(port),
+    hash,
+    length: info.get("length") as number,
+    pieceLength: info.get("piece length") as number,
+  };
+}
+
+async function handleDownloadPieceCommand() {
+  const info = await getInfo(args[5]);
+
+  const requestedPieceIndex = parseInt(args[6]);
+
+  const connection = await BitTorrentClient.connect(info.host, info.port);
+
+  await connection.handshake(info.hash, false);
+  await connection.interested();
+
+  const file = await fs.promises.open(args[4], "w");
+
+  await connection.downloadPiece(info, requestedPieceIndex, file);
+
+  await file.close();
+  connection.close();
+
+  console.log(`Piece ${args[6]} downloaded to ${args[4]}.`);
+}
+
+async function handleHandshakeCommand() {
+  const info = await getInfo(args[3]);
+
+  const connection = await BitTorrentClient.connect(info.host, info.port);
+  const res = await connection.handshake(info.hash, true);
+  connection.close();
+
+  console.log(`Peer ID: ${res.peerId.toString("hex")}`);
+}
+
+async function handlePeersCommand() {
+  const decoded = decode(fs.readFileSync(args[3])) as Map<string, any>;
+
+  for await (const peer of getPeers(decoded)) {
+    console.log(peer);
+  }
+}
+
+function handleInfoCommand() {
+  try {
     const decoded = decode(fs.readFileSync(args[3])) as Map<string, any>;
     const info = decoded.get("info");
-    const hash = createHash("sha1").update(encode(info)).digest();
-    const hostAndPort = args[4].split(":");
 
-    const connection = await BitTorrentClient.connect(
-      hostAndPort[0],
-      parseInt(hostAndPort[1])
+    console.log(`Tracker URL: ${decoded.get("announce")?.toString()}`);
+    console.log(`Length: ${info.get("length")}`);
+    console.log(
+      `Info Hash: ${createHash("sha1").update(encode(info)).digest("hex")}`
     );
 
-    const res = await connection.handshake(hash, true);
+    console.log(`Piece Length: ${info.get("piece length")}`);
+    console.log(`Piece Hashes:`);
+    const pieces = info.get("pieces").toString("hex") as string;
 
-    connection.close();
-
-    console.log(`Peer ID: ${res.peerId.toString("hex")}`);
-  }
-
-  async function handlePeersCommand() {
-    const decoded = decode(fs.readFileSync(args[3])) as Map<string, any>;
-
-    for await (const peer of getPeers(decoded)) {
-      console.log(peer);
+    let s = 0;
+    while (s < pieces.length) {
+      console.log(pieces.substring(s, s + 40));
+      s += 40;
     }
+  } catch (error: any) {
+    console.error(error.message);
   }
-
-  function handleInfoCommand() {
-    try {
-      const decoded = decode(fs.readFileSync(args[3])) as Map<string, any>;
-      const info = decoded.get("info");
-
-      console.log(`Tracker URL: ${decoded.get("announce")?.toString()}`);
-      console.log(`Length: ${info.get("length")}`);
-      console.log(
-        `Info Hash: ${createHash("sha1").update(encode(info)).digest("hex")}`
-      );
-
-      console.log(`Piece Length: ${info.get("piece length")}`);
-      console.log(`Piece Hashes:`);
-      const pieces = info.get("pieces").toString("hex") as string;
-
-      let s = 0;
-      while (s < pieces.length) {
-        console.log(pieces.substring(s, s + 40));
-        s += 40;
-      }
-    } catch (error: any) {
-      console.error(error.message);
-    }
-  }
-})();
+}
 
 function handleDecodeCommand() {
   try {
